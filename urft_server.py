@@ -16,12 +16,14 @@ while True:
     eth_header = PS.get_ethernet_header(packet)
     protocol = eth_header[2]
 
-    if(protocol == 0x0800 and PS.validate_checksum(PS.get_ip_packet(packet)) == 0xffff): # check if It IPv4
-        ip_header = PS.get_ip_header(packet)
-        ip_packet = PS.get_ip_packet(packet)
-    else: continue
+    if(protocol != 0x0800 or PS.validate_checksum(PS.get_ip_packet(packet)) != 0xffff): # check if It IPv4
+        continue
+
+    ip_header = PS.get_ip_header(packet)
+    ip_packet = PS.get_ip_packet(packet)
     
-    if(ip_header.protocol != 17 or PS.validate_checksum(PS.get_udp_packet(packet)) != 0xffff): continue
+    if(ip_header.protocol != 17 or PS.validate_checksum(PS.get_udp_packet(packet)) != 0xffff): 
+        continue
 
     udp_header = PS.get_udp_header(packet)
     if(udp_header.dst_port == 5553):

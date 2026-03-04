@@ -2,24 +2,24 @@ from socket import *
 import struct
 
 class PacketService:
-    def __init__(self):
-        pass
+    def __init__(self, packet):
+        self.packet = packet
 
-    def get_ethernet_header(self, packet):
-        return struct.unpack("!6s6sH", packet[:14])
+    def get_ethernet_header(self):
+        return struct.unpack("!6s6sH", self.packet[:14])
     
-    def get_ip_packet(self, packet):
-        return packet[14:34]
+    def get_ip_packet(self):
+        return self.packet[14:34]
     
-    def get_ip_header(self, packet):
-        return IPv4(self.get_ip_packet(packet))
+    def get_ip_header(self):
+        return IPv4(self.get_ip_packet(self.packet))
         return struct.unpack("!BBHHHBBH4s4s", self.get_ip_packet(packet))
 
-    def get_udp_packet(self, packet):
-        return packet[34:]
+    def get_udp_packet(self):
+        return self.packet[34:]
     
-    def get_udp_header(self, packet):
-        return UDP(self.get_udp_packet(packet))
+    def get_udp_header(self):
+        return UDP(self.get_udp_packet(self.packet))
 
     def validate_checksum(self, sub_packet):
         def end_around_carry(a, b):
