@@ -1,8 +1,9 @@
 from socket import *
 import struct
+import time
 
 class PacketService:
-    def __init__(self, packet):
+    def __init__(self, packet = None):
         self.packet = packet
 
     def get_ethernet_header(self):
@@ -12,14 +13,14 @@ class PacketService:
         return self.packet[14:34]
     
     def get_ip_header(self):
-        return IPv4(self.get_ip_packet(self.packet))
+        return IPv4(self.get_ip_packet())
         return struct.unpack("!BBHHHBBH4s4s", self.get_ip_packet(packet))
 
     def get_udp_packet(self):
         return self.packet[34:]
     
     def get_udp_header(self):
-        return UDP(self.get_udp_packet(self.packet))
+        return UDP(self.get_udp_packet())
 
     def validate_checksum(self, sub_packet):
         def end_around_carry(a, b):
@@ -34,7 +35,7 @@ class PacketService:
         return ~sum & 0xffff
     
     def is_packet_corrupted(self):
-        return (self.validate_checksum(self.get_ip_packet()) & self.validate_checksum(self.get_udp_packet())) == 0xffff
+        return (self.validate_checksum(self.get_ip_packet()) & self.validate_checksum(self.get_udp_packet())) != 0xffff
  
 
 class IPv4:
@@ -62,6 +63,18 @@ class UDP:
 
 class RLTP:
     def __init__(self, interface, buffsize):
-        self.sls = socket(AF_PACKET, SOCK_RAW, ntohs(0x0003)) # server listen socket
-        self.sls.bind(interface)
+        self.sl = socket(AF_PACKET, SOCK_RAW, ntohs(0x0003)) # server listen socket
+        self.sl.bind(interface)
         self.buffsize = buffsize
+        self.ss = socket(AF_INET, SOCK_DGRAM)
+        self.PS = PacketService()
+        self.sender_history = list()
+
+    def send(self, bytes, addr_port):
+        self.ss.sendto(bytes, addr_port)
+
+    def recv(self):
+        self.PS.packet = self.sl.recvfrom(self.buffsize)[0]
+        res = [self.PS.get_ip_header(), self.PS.get_udp_header()]
+        self.sender_history.append((res[0].src_ip, res[1].src_port))
+        return res
