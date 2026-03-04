@@ -6,7 +6,11 @@ class PacketService:
     def __init__(self, packet = None):
         self.packet = packet
 
+    def get_all(self):
+        return self.get_ethernet_header(), self.get_ip_header(), self.get_udp_header()
+
     def get_ethernet_header(self):
+        return Ethernet(self.packet[:14])
         return struct.unpack("!6s6sH", self.packet[:14])
     
     def get_ip_packet(self):
@@ -36,6 +40,12 @@ class PacketService:
     
     def is_packet_corrupted(self):
         return (self.validate_checksum(self.get_ip_packet()) & self.validate_checksum(self.get_udp_packet())) != 0xffff
+    
+class Ethernet:
+    def __init__(self, ethernet_packet):
+        self.src_mac = ethernet_packet[6:12]
+        self.dst_mac = ethernet_packet[:6]
+        self.protocol = int.from_bytes(ethernet_packet[12:14], "big")
  
 
 class IPv4:
@@ -78,3 +88,9 @@ class RLTP:
         res = [self.PS.get_ip_header(), self.PS.get_udp_header()]
         self.sender_history.append((res[0].src_ip, res[1].src_port))
         return res
+
+    def handshake(self):
+        pass
+
+    def clear(self):
+        self.PS.packet = None

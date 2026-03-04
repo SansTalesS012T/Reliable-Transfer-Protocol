@@ -6,17 +6,25 @@ NETWORK_INTERFACE = ("lo", 0)
 
 control = urft_system.RLTP(NETWORK_INTERFACE, BUFFSIZE)
 
-lst = control.recv()
+while(True):
+    lst = control.recv()
 
-for i in lst:
-    for attr, val in vars(i).items():
-        print(f"{attr}: {val}")
-    print()
+    for i in lst:
+        for attr, val in vars(i).items():
+            print(f"{attr}: {val}")
+        print()
 
-if(not control.PS.is_packet_corrupted()):
-    addr = control.sender_history.pop()
-    print(addr)
-    control.send("Your Package is intregated".encode(), addr)
+    try:
+        print(f"data: {lst[1].data.decode()}")
+    except:
+        pass
+
+    if(not control.PS.is_packet_corrupted()):
+        addr = control.sender_history.pop()
+        print(addr)
+        control.send("Your Package is intregated".encode(), addr)
+
+    control.clear()
 
 # while True:
 #     PS.packet, addr = server_socket.recvfrom(BUFFSIZE)
