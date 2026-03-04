@@ -32,6 +32,10 @@ class PacketService:
             sum = end_around_carry(sum, cur)
 
         return ~sum & 0xffff
+    
+    def is_packet_corrupted(self):
+        return (self.validate_checksum(self.get_ip_packet()) & self.validate_checksum(self.get_udp_packet())) == 0xffff
+ 
 
 class IPv4:
     def __init__(self, ipv4_packet):
@@ -57,5 +61,7 @@ class UDP:
         self.data = udp_packet[8:]
 
 class RLTP:
-    def __init__(self):
-        pass
+    def __init__(self, interface, buffsize):
+        self.sls = socket(AF_PACKET, SOCK_RAW, ntohs(0x0003)) # server listen socket
+        self.sls.bind(interface)
+        self.buffsize = buffsize

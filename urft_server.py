@@ -12,20 +12,20 @@ server_send_socket = socket(AF_INET, SOCK_DGRAM)
 PS = urft_system.PacketService()
 
 while True:
-    packet, addr = server_socket.recvfrom(BUFFSIZE)
-    eth_header = PS.get_ethernet_header(packet)
+    PS.packet, addr = server_socket.recvfrom(BUFFSIZE)
+    eth_header = PS.get_ethernet_header()
     protocol = eth_header[2]
 
-    if(protocol != 0x0800 or PS.validate_checksum(PS.get_ip_packet(packet)) != 0xffff): # check if It IPv4
+    if(protocol != 0x0800 or PS.validate_checksum(PS.get_ip_packet()) != 0xffff): # check if It IPv4
         continue
 
-    ip_header = PS.get_ip_header(packet)
-    ip_packet = PS.get_ip_packet(packet)
+    ip_header = PS.get_ip_header()
+    ip_packet = PS.get_ip_packet()
     
-    if(ip_header.protocol != 17 or PS.validate_checksum(PS.get_udp_packet(packet)) != 0xffff): 
+    if(ip_header.protocol != 17 or PS.validate_checksum(PS.get_udp_packet()) != 0xffff): 
         continue
 
-    udp_header = PS.get_udp_header(packet)
+    udp_header = PS.get_udp_header()
     if(udp_header.dst_port == 5553):
         print(f"{udp_header.data.decode()} from {addr}")
         server_send_socket.sendto("Acknowledge".encode(), (ip_header.src_ip, udp_header.src_port))
