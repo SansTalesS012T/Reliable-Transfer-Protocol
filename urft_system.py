@@ -42,6 +42,11 @@ class PacketService:
         flag = lst.pop()
         lst.extend([(flag & 0b100) >> 2, (flag & 0b010) >> 1, flag & 0b001, data])
         return TCP(*lst)
+    
+    def unpack_app(self, bytes):
+        file_name = bytes[:20].decode().strip()
+        content = bytes[20:]
+        return (file_name, content)
 
     def validate_checksum(self, sub_packet):
         def end_around_carry(a, b):
@@ -114,28 +119,41 @@ class RLTP:
         self.thread = list()
         self.windows = 64
         self.buffer = list()
+        self.target_addr_port = None
+
+        # for control tcp transmit
+        self.last_transmit = 0
+        self.transmit_complete = False
+        self.quota = 0
+        self.retransmit = False
+
 
     def send_file(self, file_name, addr_port):
+        if(len(file_name) > 20): 
+            return 
         f = open(file_name, 'rb')
         raw = f.read()
-        bytes = [raw[i: i+self.windows if (i+self.windows < len(raw)) else len(raw)] for i in range(0, len(raw),self.windows)]
+        bytes = f"{file_name:<20}" + [raw[i: i+self.windows if (i+self.windows < len(raw)) else len(raw)] for i in range(0, len(raw),self.windows)]
         tcps = self.prep_to_tcps(bytes)
-
-        for i in tcps:
-            for j, k in vars(i).items():
-                print(f"{j}: {k}")
-            print()
-
-        for tcp in tcps:
-            self.thread.append(threading.Thread(target = self.send, args = (self.PS.pack_tcp(tcp), addr_port)))
-
-        # for t in self.thread:
-        #     t.start()
-
-        # for t in self.thread:
-        #     t.join()
-
+        cwnd = 8
         f.close()
+
+        t = threading.Thread(target = self.recv_ack, args = (tcps))
+        t.start()
+        cur_transmit = 0
+        self.quota = cwnd
+        while(cur_transmit < len(bytes)):
+            if(self.retransmit):
+                self.quota += cur_transmit - self.last_transmit
+                cur_transmit = self.last_transmit
+                self.retransmit = False
+            if(self.quota > 0):
+                self.send(self.PS.pack_tcp(tcps[cur_transmit]), addr_port)
+                cur_transmit += 1
+                self.quota -= 1
+        t.join()
+        self.transmit_complete = True
+        self.set_default_transmit_control()
 
     def send(self, bytes, addr_port):
         self.ss.sendto(bytes, addr_port)
@@ -143,14 +161,86 @@ class RLTP:
     def recv(self):
         self.PS.packet = self.sl.recvfrom(self.buffsize)[0]
         res = self.PS.get_packet()
-        self.sender_history.append((res.ipv4.src_ip, res.udp.src_port))
+        # self.sender_history.append((res.ipv4.src_ip, res.udp.src_port))
         return res
 
     def recv_file(self, src_ip):
-        pass
+        complete = False
+        ack = None
+        bytes = b''
+        while(not complete):
+            packet = self.recv()
 
-    def connect(self, dst_ip, data):
+            if(self.PS.is_packet_corrupted() or
+                packet.ethernet.protocol != self.PS.IPV4_PROTOCOL or 
+                packet.ipv4.protocol != self.PS.UDP_PROTOCOL or
+                src_ip != packet.ipv4.src_ip):
+                self.send(self.PS.pack_tcp(TCP(0, ack, self.windows, 1, 0, 0, None)), 
+                          (packet.ipv4.src_ip, packet.udp.src_port))
+                self.clear()
+                continue
+
+            tcp_header = self.PS.unpack_tcp(packet.udp.data)
+            bytes += tcp_header.data
+            ack = ack + len(tcp_header.data) if ack != None else tcp_header.seq_num + len(tcp_header.data)
+            self.send(self.PS.pack_tcp(0, ack, self.windows, 1, 0, 0, None))
+            if(tcp_header.fin == 1):
+                complete = True
+        return bytes
+
+
+    def recv_ack(self, tcps):
+        last_time = time.time()
+        i = 0
+        count_dup = 0
+        last_tcp = None
+        need_ack = len(tcps[i].data)
+        while(not self.transmit_complete):
+            if(self.is_time_out(last_time, 50) or count_dup == 3):
+                self.retransmit = True
+                last_time = time.time()
+                count_dup = 0
+                continue
+
+            packet = self.recv()
+
+            if(self.PS.is_packet_corrupted() or
+                packet.ethernet.protocol != self.PS.IPV4_PROTOCOL or 
+                packet.ipv4.protocol != self.PS.UDP_PROTOCOL or
+                self.target_addr_port[0] != packet.ipv4.src_ip):
+                self.clear()
+                continue
+
+            tcp_header = self.PS.unpack_tcp(packet.udp.data)
+
+            if(tcp_header.ack_num == last_tcp.ack_num):
+                count_dup += 1
+                continue
+
+            if(tcp_header.ack_num == need_ack):
+                self.quota += 1
+                i += 1
+                need_ack += len(tcps[i].data)
+                count_dup = 0
+                self.last_transmit += 1
+
+            if(tcp_header.ack_num > need_ack):
+                diff = tcp_header.ack_num - need_ack
+                j = i
+                while(diff > 0):
+                    diff -= len(tcps[j].data)
+                    j += 1
+                self.quota += j - i
+                i = j
+                self.last_transmit = i
+
+            last_time = time.time()
+            last_tcp = tcp_header
+            
+
+    def connect(self, dst_ip):
         addr_port = (dst_ip, randint(5550, 10000))
+        self.target_addr_port = addr_port
         # send syn
         self.send(self.PS.pack_tcp(TCP(1, 0, 64, 0, 1, 0, None)), addr_port)
         # wait for syn-ack
@@ -164,7 +254,6 @@ class RLTP:
                 self.clear()
                 continue
             tcp_header = self.PS.unpack_tcp(packet.udp.data)
-            print(tcp_header)
             if((tcp_header.seq_num == 1 and tcp_header.ack_num == 1) and 
                (tcp_header.syn and tcp_header.ack)):
                 syn_acked = True
@@ -174,18 +263,16 @@ class RLTP:
             return False, "TIMEOUT"
 
         # send ack
-        self.send(self.PS.pack_tcp(TCP(2, 1, 64, 1, 0, 0, data)), addr_port)
+        self.send(self.PS.pack_tcp(TCP(2, 1, 64, 1, 0, 0, None)), addr_port)
 
         return True, "OK"
 
     def prep_to_tcps(self, file_bytes):
         cur_size = 0
-        last_size = 0
         res = list()
         for i, byte in enumerate(file_bytes):
+            res.append(TCP(cur_size, 0, self.windows, 1, 0, 0 if i < len(file_bytes)-1 else 1, byte))
             cur_size += len(byte)
-            res.append(TCP(cur_size, last_size, self.windows, 1, 0, 0 if i < len(file_bytes)-1 else 1, byte))
-            last_size = cur_size
         return res
 
     def accept(self, addr_port):
@@ -216,9 +303,12 @@ class RLTP:
             return False, res
 
         return True, res
-        
-    def keep_alive(self, addr_port):
-        pass
+    
+    def save(self, bytes):
+        file_name, content = self.PS.unpack_app(bytes)
+        f = open(file_name, 'wb')
+        f.write(content)
+        f.close()
 
     def listen(self):
         connected = False
@@ -247,3 +337,8 @@ class RLTP:
         self.PS.packet = None
         self.sender_history.clear()
 
+    def set_default_transmit_control(self):
+        self.last_transmit = 0
+        self.transmit_complete = False
+        self.quota = 0
+        self.retransmit = False
