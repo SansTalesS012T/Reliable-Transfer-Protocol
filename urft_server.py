@@ -24,6 +24,8 @@ while(not connected):
         continue
 
     connected = control.accept((packet.ipv4.src_ip, packet.udp.src_port))
+
+print("connected!")
     
 # while True:
 #     PS.packet, addr = server_socket.recvfrom(BUFFSIZE)

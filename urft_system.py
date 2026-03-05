@@ -2,6 +2,7 @@ from socket import *
 from random import *
 import struct
 import time
+import threading
 
 class PacketService:
     def __init__(self, packet = None):
@@ -15,14 +16,12 @@ class PacketService:
 
     def get_ethernet_header(self):
         return Ethernet(self.packet[:14])
-        return struct.unpack("!6s6sH", self.packet[:14])
     
     def get_ip_packet(self):
         return self.packet[14:34]
     
     def get_ip_header(self):
         return IPv4(self.get_ip_packet())
-        return struct.unpack("!BBHHHBBH4s4s", self.get_ip_packet(packet))
 
     def get_udp_packet(self):
         return self.packet[34:]
@@ -113,6 +112,30 @@ class RLTP:
         self.PS = PacketService()
         self.sender_history = list()
         self.thread = list()
+        self.windows = 64
+        self.buffer = list()
+
+    def send_file(self, file_name, addr_port):
+        f = open(file_name, 'rb')
+        raw = f.read()
+        bytes = [raw[i: i+self.windows if (i+self.windows < len(raw)) else len(raw)] for i in range(0, len(raw),self.windows)]
+        tcps = self.prep_to_tcps(bytes)
+
+        for i in tcps:
+            for j, k in vars(i).items():
+                print(f"{j}: {k}")
+            print()
+
+        for tcp in tcps:
+            self.thread.append(threading.Thread(target = self.send, args = (self.PS.pack_tcp(tcp), addr_port)))
+
+        # for t in self.thread:
+        #     t.start()
+
+        # for t in self.thread:
+        #     t.join()
+            
+        f.close()
 
     def send(self, bytes, addr_port):
         self.ss.sendto(bytes, addr_port)
@@ -122,8 +145,11 @@ class RLTP:
         res = self.PS.get_packet()
         self.sender_history.append((res.ipv4.src_ip, res.udp.src_port))
         return res
+    
+    def recv_file(self, src_ip):
+        pass
 
-    def connect(self, dst_ip):
+    def connect(self, dst_ip, data):
         addr_port = (dst_ip, randint(5550, 10000))
         # send syn
         self.send(self.PS.pack_tcp(TCP(1, 0, 64, 0, 1, 0, None)), addr_port)
@@ -148,10 +174,19 @@ class RLTP:
             return False, "TIMEOUT"
         
         # send ack
-        self.send(self.PS.pack_tcp(TCP(2, 1, 64, 1, 0, 0, None)), addr_port)
+        self.send(self.PS.pack_tcp(TCP(2, 1, 64, 1, 0, 0, data)), addr_port)
 
         return True, "OK"
 
+    def prep_to_tcps(self, file_bytes):
+        cur_size = 0
+        last_size = 0
+        res = list()
+        for i, byte in enumerate(file_bytes):
+            cur_size += len(byte)
+            res.append(TCP(cur_size, last_size, self.windows, 1, 0, 0 if i < len(file_bytes)-1 else 1, byte))
+            last_size = cur_size
+        return res
 
     def accept(self, addr_port):
         # send syn-ack
@@ -171,6 +206,7 @@ class RLTP:
             if((tcp_header.seq_num == 2 and tcp_header.ack_num == 1) and 
                (tcp_header.ack)):
                 acked = True
+                self.windows = tcp_header.window_size
 
         self.clear()
         if(not acked):
@@ -178,7 +214,6 @@ class RLTP:
 
         return True, "OK"
         
-
     def keep_alive(self, addr_port):
         pass
 
