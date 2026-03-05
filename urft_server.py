@@ -6,6 +6,9 @@ NETWORK_INTERFACE = ("wlp3s0", 0)
 
 control = urft_system.RLTP(NETWORK_INTERFACE, BUFFSIZE)
 
+print(control.listen())
+
+exit()
 connected = False
 
 while(not connected):
@@ -25,7 +28,7 @@ while(not connected):
 
     connected = control.accept((packet.ipv4.src_ip, packet.udp.src_port))
 
-print("connected!")
+print(connected)
     
 # while True:
 #     PS.packet, addr = server_socket.recvfrom(BUFFSIZE)

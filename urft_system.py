@@ -16,16 +16,16 @@ class PacketService:
 
     def get_ethernet_header(self):
         return Ethernet(self.packet[:14])
-    
+
     def get_ip_packet(self):
         return self.packet[14:34]
-    
+
     def get_ip_header(self):
         return IPv4(self.get_ip_packet())
 
     def get_udp_packet(self):
         return self.packet[34:]
-    
+
     def get_udp_header(self):
         return UDP(self.get_udp_packet())
 
@@ -34,7 +34,7 @@ class PacketService:
         res = struct.pack(self.TCP_HEADER_FORMAT, tcp.seq_num, tcp.ack_num, tcp.window_size, flag)
         if(tcp.data == None): return res
         return res + tcp.data
-    
+
     def unpack_tcp(self, bytes):
         length = len(bytes) - 11
         lst = list(struct.unpack(self.TCP_HEADER_FORMAT + f"{length}s", bytes))
@@ -54,7 +54,7 @@ class PacketService:
             sum = end_around_carry(sum, cur)
 
         return ~sum & 0xffff
-    
+
     def is_packet_corrupted(self):
         return (self.validate_checksum(self.get_ip_packet()) & self.validate_checksum(self.get_udp_packet())) != 0xffff
 
@@ -63,7 +63,7 @@ class Packet:
         self.ethernet = ethernet
         self.ipv4 = ipv4
         self.udp = udp
-    
+
 class Ethernet:
     def __init__(self, ethernet_packet):
         self.src_mac = ethernet_packet[6:12]
@@ -134,7 +134,7 @@ class RLTP:
 
         # for t in self.thread:
         #     t.join()
-            
+
         f.close()
 
     def send(self, bytes, addr_port):
@@ -145,7 +145,7 @@ class RLTP:
         res = self.PS.get_packet()
         self.sender_history.append((res.ipv4.src_ip, res.udp.src_port))
         return res
-    
+
     def recv_file(self, src_ip):
         pass
 
@@ -168,11 +168,11 @@ class RLTP:
             if((tcp_header.seq_num == 1 and tcp_header.ack_num == 1) and 
                (tcp_header.syn and tcp_header.ack)):
                 syn_acked = True
-        
+
         self.clear()
         if(not syn_acked):
             return False, "TIMEOUT"
-        
+
         # send ack
         self.send(self.PS.pack_tcp(TCP(2, 1, 64, 1, 0, 0, data)), addr_port)
 
@@ -194,6 +194,7 @@ class RLTP:
         # wait for ack
         acked = False
         last_time = time.time()
+        res = None
         while(not acked and not self.is_time_out(last_time, 50)):
             packet = self.recv()
             if(self.PS.is_packet_corrupted() or 
@@ -201,21 +202,43 @@ class RLTP:
                packet.ipv4.protocol != self.PS.UDP_PROTOCOL):
                 self.clear()
                 continue
+
             tcp_header = self.PS.unpack_tcp(packet.udp.data)
-            print(tcp_header)
+
             if((tcp_header.seq_num == 2 and tcp_header.ack_num == 1) and 
                (tcp_header.ack)):
                 acked = True
+                res = (packet.ipv4.src_ip, packet.udp.src_port, tcp_header.data)
                 self.windows = tcp_header.window_size
 
         self.clear()
         if(not acked):
-            return False, "TIMEOUT"
+            return False, res
 
-        return True, "OK"
+        return True, res
         
     def keep_alive(self, addr_port):
         pass
+
+    def listen(self):
+        connected = False
+        res = None
+        while(not connected):
+            packet = self.recv()
+            if(packet.ethernet.protocol != self.PS.IPV4_PROTOCOL or
+            packet.ipv4.protocol != self.PS.UDP_PROTOCOL or
+            self.PS.is_packet_corrupted()):
+                self.clear()
+                continue
+
+            tcp_header = self.PS.unpack_tcp(packet.udp.data)
+        
+            if(tcp_header.syn != 1 or tcp_header.seq_num != 1 or tcp_header.ack_num != 0):
+                self.clear()
+                continue
+
+            connected, res = self.accept((packet.ipv4.src_ip, packet.udp.src_port))
+        return res
 
     def is_time_out(self, ref, limit):
         return (time.time() - ref)*1000 >= limit
@@ -223,3 +246,4 @@ class RLTP:
     def clear(self):
         self.PS.packet = None
         self.sender_history.clear()
+
