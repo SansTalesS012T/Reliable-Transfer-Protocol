@@ -303,7 +303,7 @@ class RLTP:
                (tcp_header.ack)):
                 acked = True
                 res = (packet.ipv4.src_ip, packet.udp.src_port)
-                WINDOWS = tcp_header.window_size
+                self.windows = tcp_header.window_size
 
         self.clear()
         if(not acked):
