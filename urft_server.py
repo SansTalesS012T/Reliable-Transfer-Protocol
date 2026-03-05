@@ -2,30 +2,29 @@ from socket import *
 import urft_system
 
 BUFFSIZE = 65565
-NETWORK_INTERFACE = ("lo", 0)
+NETWORK_INTERFACE = ("wlp3s0", 0)
 
 control = urft_system.RLTP(NETWORK_INTERFACE, BUFFSIZE)
 
-while(True):
-    lst = control.recv()
+connected = False
 
-    for i in lst:
-        for attr, val in vars(i).items():
-            print(f"{attr}: {val}")
-        print()
+while(not connected):
+    packet = control.recv()
 
-    try:
-        print(f"data: {lst[1].data.decode()}")
-    except:
-        pass
+    if(packet.ethernet.protocol != control.PS.IPV4_PROTOCOL or 
+       packet.ipv4.protocol != control.PS.UDP_PROTOCOL or
+       control.PS.is_packet_corrupted()):
+        control.clear()
+        continue
 
-    if(not control.PS.is_packet_corrupted()):
-        addr = control.sender_history.pop()
-        print(addr)
-        control.send("Your Package is intregated".encode(), addr)
+    tcp_header = control.PS.unpack_tcp(packet.udp.data)
 
-    control.clear()
+    if(tcp_header.syn != 1 or tcp_header.seq_num != 1 or tcp_header.ack_num != 0):
+        control.clear()
+        continue
 
+    connected = control.accept((packet.ipv4.src_ip, packet.udp.src_port))
+    
 # while True:
 #     PS.packet, addr = server_socket.recvfrom(BUFFSIZE)
 #     eth_header = PS.get_ethernet_header()
