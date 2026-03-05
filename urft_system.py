@@ -119,6 +119,7 @@ class RLTP:
         self.PS = PacketService()
         self.sender_history = list()
         self.thread = list()
+        self.windows = 1400
         self.buffer = list()
         self.target_addr_port = None
 
@@ -127,6 +128,7 @@ class RLTP:
         self.transmit_complete = False
         self.quota = 0
         self.retransmit = False
+        self.mss = 256
 
 
     def send_file(self, file_name, addr_port):
@@ -134,30 +136,28 @@ class RLTP:
             return 
         f = open(file_name, 'rb')
         raw = f"{file_name:<20}".encode() + f.read()
-        bytes = [raw[i: i+WINDOWS if (i+WINDOWS < len(raw)) else len(raw)] for i in range(0, len(raw),WINDOWS)]
+        bytes = [raw[i: i+self.windows if (i+self.windows < len(raw)) else len(raw)] for i in range(0, len(raw), self.windows)]
         tcps = self.prep_to_tcps(bytes)
-        cwnd = 8
         f.close()
-        print(f"Length: {len(tcps)}")
+        # print(f"Length: {len(tcps)}")
         t = threading.Thread(target = self.recv_ack, kwargs = {"tcps": tcps})
         t.start()
         cur_transmit = 0
-        self.quota = cwnd
-        while(cur_transmit < len(bytes)):
-            print(cur_transmit, self.quota)
+        self.quota = self.mss
+        while(cur_transmit < len(tcps)):
+            # print(cur_transmit, self.quota, len(tcps))
             if(self.retransmit):
                 print("retransmit!")
-                self.quota += cur_transmit - self.last_transmit
+                self.quota = self.mss
                 cur_transmit = self.last_transmit
                 self.retransmit = False
             if(self.quota > 0):
                 self.send(self.PS.pack_tcp(tcps[cur_transmit]), addr_port)
-                print("send!")
+                # print("send!")
                 cur_transmit += 1
                 self.quota -= 1
         self.transmit_complete = True
         t.join()
-        print("Done")
         self.set_default_transmit_control()
 
     def send(self, bytes, addr_port):
@@ -236,8 +236,9 @@ class RLTP:
                 while(j < len(tcps) and diff > 0):
                     diff -= len(tcps[j].data)
                     j += 1
-                self.quota += j - i
+                self.quota = self.mss
                 i = j
+                need_ack += len(tcps[i].data)
                 self.last_transmit = i
 
             last_time = time.time()
@@ -279,7 +280,7 @@ class RLTP:
         cur_size = 0
         res = list()
         for i, byte in enumerate(file_bytes):
-            res.append(TCP(cur_size, 0, WINDOWS, 1, 0, 0 if i < len(file_bytes)-1 else 1, byte))
+            res.append(TCP(cur_size, 0, self.windows, 1, 0, 0 if i + 1 != len(file_bytes) else 1, byte))
             cur_size += len(byte)
         return res
 
