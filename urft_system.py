@@ -1,4 +1,5 @@
 from socket import *
+from random import *
 import struct
 import time
 
@@ -122,7 +123,8 @@ class RLTP:
         self.sender_history.append((res.ipv4.src_ip, res.udp.src_port))
         return res
 
-    def connect(self, addr_port):
+    def connect(self, dst_ip):
+        addr_port = (dst_ip, randint(5550, 10000))
         # send syn
         self.send(self.PS.pack_tcp(TCP(1, 0, 64, 0, 1, 0, None)), addr_port)
         # wait for syn-ack

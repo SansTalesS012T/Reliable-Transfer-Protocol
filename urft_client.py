@@ -4,14 +4,14 @@ import sys
 import random
 
 BUFFSIZE = 65565
-NETWORK_INTERFACE = ("wlp3s0", 0)
+NETWORK_INTERFACE = ("ens33", 0)
 
 control = urft_system.RLTP(NETWORK_INTERFACE, BUFFSIZE)
 
 connected = False
 
 while(not connected):
-    connected = control.connect((sys.argv[1]), random.randint(5553, 10000))
+    connected = control.connect((sys.argv[1]))
     
 # while True:
 #     PS.packet, addr = server_socket.recvfrom(BUFFSIZE)
