@@ -108,8 +108,6 @@ class TCP:
         self.fin = fin
         self.data = data
 
-WINDOWS = 1500
-
 class RLTP:
     def __init__(self, interface, buffsize):
         self.sl = socket(AF_PACKET, SOCK_RAW, ntohs(0x0003)) # server listen socket
