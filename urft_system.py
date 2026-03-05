@@ -108,6 +108,8 @@ class TCP:
         self.fin = fin
         self.data = data
 
+WINDOWS = 1500
+
 class RLTP:
     def __init__(self, interface, buffsize):
         self.sl = socket(AF_PACKET, SOCK_RAW, ntohs(0x0003)) # server listen socket
@@ -117,7 +119,6 @@ class RLTP:
         self.PS = PacketService()
         self.sender_history = list()
         self.thread = list()
-        self.windows = 64
         self.buffer = list()
         self.target_addr_port = None
 
@@ -133,7 +134,7 @@ class RLTP:
             return 
         f = open(file_name, 'rb')
         raw = f"{file_name:<20}".encode() + f.read()
-        bytes = [raw[i: i+self.windows if (i+self.windows < len(raw)) else len(raw)] for i in range(0, len(raw),self.windows)]
+        bytes = [raw[i: i+WINDOWS if (i+WINDOWS < len(raw)) else len(raw)] for i in range(0, len(raw),WINDOWS)]
         tcps = self.prep_to_tcps(bytes)
         cwnd = 8
         f.close()
@@ -160,6 +161,7 @@ class RLTP:
         self.set_default_transmit_control()
 
     def send(self, bytes, addr_port):
+        # print(addr_port, bytes)
         self.ss.sendto(bytes, addr_port)
 
     def recv(self):
@@ -177,16 +179,16 @@ class RLTP:
 
             if(self.PS.is_packet_corrupted() or
                 packet.ethernet.protocol != self.PS.IPV4_PROTOCOL or 
-                packet.ipv4.protocol != self.PS.UDP_PROTOCOL or
-                src_ip != packet.ipv4.src_ip):
-                self.send(self.PS.pack_tcp(TCP(0, ack, self.windows, 1, 0, 0, None)), (packet.ipv4.src_ip, packet.udp.src_port))
+                packet.ipv4.protocol != self.PS.UDP_PROTOCOL):
+                if(src_ip == packet.ipv4.src_ip):
+                    self.send(self.PS.pack_tcp(TCP(0, ack, WINDOWS, 1, 0, 0, None)), (packet.ipv4.src_ip, packet.udp.src_port))
                 self.clear()
                 continue
 
             tcp_header = self.PS.unpack_tcp(packet.udp.data)
             bytes += tcp_header.data
-            ack = ack + len(tcp_header.data) if ack != None else tcp_header.seq_num + len(tcp_header.data)
-            self.send(self.PS.pack_tcp(TCP(0, ack, self.windows, 1, 0, 0, None)),(packet.ipv4.src_ip, packet.udp.src_port))
+            ack = ack + len(tcp_header.data) if ack is not None else tcp_header.seq_num + len(tcp_header.data)
+            self.send(self.PS.pack_tcp(TCP(0, ack, WINDOWS, 1, 0, 0, None)),(packet.ipv4.src_ip, packet.udp.src_port))
             if(tcp_header.fin == 1):
                 complete = True
         self.clear()
@@ -277,7 +279,7 @@ class RLTP:
         cur_size = 0
         res = list()
         for i, byte in enumerate(file_bytes):
-            res.append(TCP(cur_size, 0, self.windows, 1, 0, 0 if i < len(file_bytes)-1 else 1, byte))
+            res.append(TCP(cur_size, 0, WINDOWS, 1, 0, 0 if i < len(file_bytes)-1 else 1, byte))
             cur_size += len(byte)
         return res
 
@@ -302,7 +304,7 @@ class RLTP:
                (tcp_header.ack)):
                 acked = True
                 res = (packet.ipv4.src_ip, packet.udp.src_port)
-                self.windows = tcp_header.window_size
+                WINDOWS = tcp_header.window_size
 
         self.clear()
         if(not acked):
@@ -334,7 +336,7 @@ class RLTP:
                 continue
 
             connected, res = self.accept((packet.ipv4.src_ip, packet.udp.src_port))
-        return res
+        return connected, res
 
     def is_time_out(self, ref, limit):
         return (time.time() - ref)*1000 >= limit
