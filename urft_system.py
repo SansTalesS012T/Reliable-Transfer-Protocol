@@ -179,17 +179,17 @@ class RLTP:
                 packet.ethernet.protocol != self.PS.IPV4_PROTOCOL or 
                 packet.ipv4.protocol != self.PS.UDP_PROTOCOL or
                 src_ip != packet.ipv4.src_ip):
-                self.send(self.PS.pack_tcp(TCP(0, ack, self.windows, 1, 0, 0, None)), 
-                          (packet.ipv4.src_ip, packet.udp.src_port))
+                self.send(self.PS.pack_tcp(TCP(0, ack, self.windows, 1, 0, 0, None)), (packet.ipv4.src_ip, packet.udp.src_port))
                 self.clear()
                 continue
 
             tcp_header = self.PS.unpack_tcp(packet.udp.data)
             bytes += tcp_header.data
             ack = ack + len(tcp_header.data) if ack != None else tcp_header.seq_num + len(tcp_header.data)
-            self.send(self.PS.pack_tcp(0, ack, self.windows, 1, 0, 0, None))
+            self.send(self.PS.pack_tcp(TCP(0, ack, self.windows, 1, 0, 0, None)),(packet.ipv4.src_ip, packet.udp.src_port))
             if(tcp_header.fin == 1):
                 complete = True
+        self.clear()
         return bytes
 
 
@@ -301,7 +301,7 @@ class RLTP:
             if((tcp_header.seq_num == 2 and tcp_header.ack_num == 1) and 
                (tcp_header.ack)):
                 acked = True
-                res = (packet.ipv4.src_ip, packet.udp.src_port, tcp_header.data)
+                res = (packet.ipv4.src_ip, packet.udp.src_port)
                 self.windows = tcp_header.window_size
 
         self.clear()
