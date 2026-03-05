@@ -179,14 +179,14 @@ class RLTP:
                 packet.ethernet.protocol != self.PS.IPV4_PROTOCOL or 
                 packet.ipv4.protocol != self.PS.UDP_PROTOCOL):
                 if(src_ip == packet.ipv4.src_ip):
-                    self.send(self.PS.pack_tcp(TCP(0, ack, WINDOWS, 1, 0, 0, None)), (packet.ipv4.src_ip, packet.udp.src_port))
+                    self.send(self.PS.pack_tcp(TCP(0, ack, self.windows, 1, 0, 0, None)), (packet.ipv4.src_ip, packet.udp.src_port))
                 self.clear()
                 continue
 
             tcp_header = self.PS.unpack_tcp(packet.udp.data)
             bytes += tcp_header.data
             ack = ack + len(tcp_header.data) if ack is not None else tcp_header.seq_num + len(tcp_header.data)
-            self.send(self.PS.pack_tcp(TCP(0, ack, WINDOWS, 1, 0, 0, None)),(packet.ipv4.src_ip, packet.udp.src_port))
+            self.send(self.PS.pack_tcp(TCP(0, ack, self.windows, 1, 0, 0, None)),(packet.ipv4.src_ip, packet.udp.src_port))
             if(tcp_header.fin == 1):
                 complete = True
         self.clear()
