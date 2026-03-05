@@ -132,27 +132,31 @@ class RLTP:
         if(len(file_name) > 20): 
             return 
         f = open(file_name, 'rb')
-        raw = f.read()
-        bytes = f"{file_name:<20}" + [raw[i: i+self.windows if (i+self.windows < len(raw)) else len(raw)] for i in range(0, len(raw),self.windows)]
+        raw = f"{file_name:<20}".encode() + f.read()
+        bytes = [raw[i: i+self.windows if (i+self.windows < len(raw)) else len(raw)] for i in range(0, len(raw),self.windows)]
         tcps = self.prep_to_tcps(bytes)
         cwnd = 8
         f.close()
-
-        t = threading.Thread(target = self.recv_ack, args = (tcps))
+        print(f"Length: {len(tcps)}")
+        t = threading.Thread(target = self.recv_ack, kwargs = {"tcps": tcps})
         t.start()
         cur_transmit = 0
         self.quota = cwnd
         while(cur_transmit < len(bytes)):
+            print(cur_transmit, self.quota)
             if(self.retransmit):
+                print("retransmit!")
                 self.quota += cur_transmit - self.last_transmit
                 cur_transmit = self.last_transmit
                 self.retransmit = False
             if(self.quota > 0):
                 self.send(self.PS.pack_tcp(tcps[cur_transmit]), addr_port)
+                print("send!")
                 cur_transmit += 1
                 self.quota -= 1
-        t.join()
         self.transmit_complete = True
+        t.join()
+        print("Done")
         self.set_default_transmit_control()
 
     def send(self, bytes, addr_port):
@@ -213,21 +217,21 @@ class RLTP:
 
             tcp_header = self.PS.unpack_tcp(packet.udp.data)
 
-            if(tcp_header.ack_num == last_tcp.ack_num):
+            if(last_tcp != None and tcp_header.ack_num == last_tcp.ack_num):
                 count_dup += 1
                 continue
 
-            if(tcp_header.ack_num == need_ack):
+            if(last_tcp != None and tcp_header.ack_num == need_ack):
                 self.quota += 1
                 i += 1
                 need_ack += len(tcps[i].data)
                 count_dup = 0
                 self.last_transmit += 1
 
-            if(tcp_header.ack_num > need_ack):
+            if(last_tcp != None and tcp_header.ack_num > need_ack):
                 diff = tcp_header.ack_num - need_ack
                 j = i
-                while(diff > 0):
+                while(j < len(tcps) and diff > 0):
                     diff -= len(tcps[j].data)
                     j += 1
                 self.quota += j - i
@@ -236,6 +240,7 @@ class RLTP:
 
             last_time = time.time()
             last_tcp = tcp_header
+        print("Done Recv ACK")
             
 
     def connect(self, dst_ip):
@@ -250,12 +255,13 @@ class RLTP:
             packet = self.recv()
             if(self.PS.is_packet_corrupted() or 
                packet.ethernet.protocol != self.PS.IPV4_PROTOCOL or 
-               packet.ipv4.protocol != self.PS.UDP_PROTOCOL):
+               packet.ipv4.protocol != self.PS.UDP_PROTOCOL or
+               packet.ipv4.src_ip != dst_ip):
                 self.clear()
                 continue
             tcp_header = self.PS.unpack_tcp(packet.udp.data)
             if((tcp_header.seq_num == 1 and tcp_header.ack_num == 1) and 
-               (tcp_header.syn and tcp_header.ack)):
+               (tcp_header.syn == 1 and tcp_header.ack == 1)):
                 syn_acked = True
 
         self.clear()

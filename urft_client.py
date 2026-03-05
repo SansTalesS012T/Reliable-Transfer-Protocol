@@ -12,6 +12,9 @@ connected = False
 
 while(not connected):
     connected = control.connect((sys.argv[1]))
+    if(connected[0]):
+        control.send_file(sys.argv[2], (sys.argv[1], random.randint(5550, 10000)))
+    print("Done")
     
 # while True:
 #     PS.packet, addr = server_socket.recvfrom(BUFFSIZE)
