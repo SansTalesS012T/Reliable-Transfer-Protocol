@@ -2,6 +2,7 @@ from socket import *
 import urft_system
 import sys
 import random
+import time
 
 BUFFSIZE = 65565
 NETWORK_INTERFACE = ("ens33", 0)
@@ -11,9 +12,11 @@ control = urft_system.RLTP(NETWORK_INTERFACE, BUFFSIZE)
 connected = False
 
 while(not connected):
+    start = time.time()
     connected = control.connect((sys.argv[1]))
     if(connected[0]):
         control.send_file(sys.argv[2], (sys.argv[1], random.randint(5550, 10000)))
+        print(f"Time use: {time.time() - start:.2f}")
     print("Done")
     
 # while True:
