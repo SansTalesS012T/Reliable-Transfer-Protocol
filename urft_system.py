@@ -108,6 +108,8 @@ class TCP:
         self.fin = fin
         self.data = data
 
+WINDOWS = 1500
+
 class RLTP:
     def __init__(self, interface, buffsize):
         self.sl = socket(AF_PACKET, SOCK_RAW, ntohs(0x0003)) # server listen socket
@@ -159,6 +161,7 @@ class RLTP:
         self.set_default_transmit_control()
 
     def send(self, bytes, addr_port):
+        # print(addr_port, bytes)
         self.ss.sendto(bytes, addr_port)
 
     def recv(self):
@@ -176,19 +179,19 @@ class RLTP:
 
             if(self.PS.is_packet_corrupted() or
                 packet.ethernet.protocol != self.PS.IPV4_PROTOCOL or 
-                packet.ipv4.protocol != self.PS.UDP_PROTOCOL or
-                src_ip != packet.ipv4.src_ip):
-                self.send(self.PS.pack_tcp(TCP(0, ack, self.windows, 1, 0, 0, None)), 
-                          (packet.ipv4.src_ip, packet.udp.src_port))
+                packet.ipv4.protocol != self.PS.UDP_PROTOCOL):
+                if(src_ip == packet.ipv4.src_ip):
+                    self.send(self.PS.pack_tcp(TCP(0, ack, WINDOWS, 1, 0, 0, None)), (packet.ipv4.src_ip, packet.udp.src_port))
                 self.clear()
                 continue
 
             tcp_header = self.PS.unpack_tcp(packet.udp.data)
             bytes += tcp_header.data
-            ack = ack + len(tcp_header.data) if ack != None else tcp_header.seq_num + len(tcp_header.data)
-            self.send(self.PS.pack_tcp(0, ack, self.windows, 1, 0, 0, None))
+            ack = ack + len(tcp_header.data) if ack is not None else tcp_header.seq_num + len(tcp_header.data)
+            self.send(self.PS.pack_tcp(TCP(0, ack, WINDOWS, 1, 0, 0, None)),(packet.ipv4.src_ip, packet.udp.src_port))
             if(tcp_header.fin == 1):
                 complete = True
+        self.clear()
         return bytes
 
 
@@ -301,8 +304,8 @@ class RLTP:
             if((tcp_header.seq_num == 2 and tcp_header.ack_num == 1) and 
                (tcp_header.ack)):
                 acked = True
-                res = (packet.ipv4.src_ip, packet.udp.src_port, tcp_header.data)
-                self.windows = tcp_header.window_size
+                res = (packet.ipv4.src_ip, packet.udp.src_port)
+                WINDOWS = tcp_header.window_size
 
         self.clear()
         if(not acked):
@@ -334,7 +337,7 @@ class RLTP:
                 continue
 
             connected, res = self.accept((packet.ipv4.src_ip, packet.udp.src_port))
-        return res
+        return connected, res
 
     def is_time_out(self, ref, limit):
         return (time.time() - ref)*1000 >= limit
