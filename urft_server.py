@@ -8,4 +8,5 @@ control = urft_system.RLTP(NETWORK_INTERFACE, BUFFSIZE)
 
 while(True):
     res = control.listen()
-    print(res)
+    control.save(control.recv_file(res[0]))
+    print("Saved!")
