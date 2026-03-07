@@ -12,5 +12,6 @@ while(True):
         print("Connection Failed")
         continue
     print(res[1])
-    control.save(control.recv_file(res[1][0]))
+    control.save(control.recv_file())
     print("Saved!")
+    break

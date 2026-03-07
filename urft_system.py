@@ -3,6 +3,7 @@ from random import *
 import struct
 import time
 import threading
+import queue
 
 class PacketService:
     def __init__(self, packet = None):
@@ -46,6 +47,7 @@ class PacketService:
     def unpack_app(self, bytes):
         file_name = bytes[:20].decode().strip()
         content = bytes[20:]
+        print(f"file_name: {file_name}")
         return (file_name, content)
 
     def validate_checksum(self, sub_packet):
@@ -122,22 +124,45 @@ class RLTP:
         self.target_addr_port = None
 
         # for control tcp transmit
+        self.unverify_packets = queue.Queue()
+        self.verified_packets = list()
         self.last_transmit = 0
         self.transmit_complete = False
         self.quota = 0
         self.retransmit = False
         self.mss = 256
+        self.cur_seq = 0
+        self.income_bytes = b''
 
+    def recv_packets(self):
+        while(not self.transmit_complete):
+            packet = self.recv()
+            if(packet != None): 
+                self.unverify_packets.put(packet)
+
+    def verify_packet(self):
+        while(not self.transmit_complete):
+            if(self.unverify_packets.empty()):
+                continue
+            packet: Packet = self.unverify_packets.get()
+            if(packet.ethernet.protocol != self.PS.IPV4_PROTOCOL or 
+                packet.ipv4.protocol != self.PS.UDP_PROTOCOL or
+                self.target_addr_port[0] != packet.ipv4.src_ip):
+                continue
+            tcp_header = self.PS.unpack_tcp(packet.udp.data)
+            self.put_into_buffer(tcp_header)
+            if(len(self.verified_packets) > 0):
+                print(f"cur_seq, seq_num, size: {self.cur_seq}, {self.verified_packets[0].seq_num}, {len(self.verified_packets)}")
+            
 
     def send_file(self, file_name, addr_port):
-        if(len(file_name) > 20): 
+        if(len(file_name) > 20):
             return 
         f = open(file_name, 'rb')
         raw = f"{file_name:<20}".encode() + f.read()
         bytes = [raw[i: i+self.windows if (i+self.windows < len(raw)) else len(raw)] for i in range(0, len(raw), self.windows)]
         tcps = self.prep_to_tcps(bytes)
         f.close()
-        # print(f"Length: {len(tcps)}")
         t = threading.Thread(target = self.recv_ack, kwargs = {"tcps": tcps})
         t.start()
         cur_transmit = 0
@@ -164,34 +189,51 @@ class RLTP:
 
     def recv(self):
         self.PS.packet = self.sl.recvfrom(self.buffsize)[0]
+        if(self.PS.is_packet_corrupted()):
+            self.clear()
+            return None
         res = self.PS.get_packet()
-        # self.sender_history.append((res.ipv4.src_ip, res.udp.src_port))
         return res
+    
+    def handle_buffer(self):
+        last_time = time.time()
+        while(not self.transmit_complete):
+            # print(f"Verified Packet: {len(self.verified_packets)}")
+            if(self.is_time_out(last_time, 50)):
+                self.send(self.PS.pack_tcp(TCP(0, self.cur_seq, self.windows, 1, 0, 0, None)), self.target_addr_port)
+                last_time = time.time()
 
-    def recv_file(self, src_ip):
-        complete = False
-        ack = None
-        bytes = b''
-        while(not complete):
-            packet = self.recv()
-
-            if(self.PS.is_packet_corrupted() or
-                packet.ethernet.protocol != self.PS.IPV4_PROTOCOL or 
-                packet.ipv4.protocol != self.PS.UDP_PROTOCOL):
-                if(src_ip == packet.ipv4.src_ip):
-                    self.send(self.PS.pack_tcp(TCP(0, ack, self.windows, 1, 0, 0, None)), (packet.ipv4.src_ip, packet.udp.src_port))
-                self.clear()
+            if(len(self.verified_packets) == 0):
+                print("Skip")
                 continue
 
-            tcp_header = self.PS.unpack_tcp(packet.udp.data)
-            bytes += tcp_header.data
-            ack = ack + len(tcp_header.data) if ack is not None else tcp_header.seq_num + len(tcp_header.data)
-            self.send(self.PS.pack_tcp(TCP(0, ack, self.windows, 1, 0, 0, None)),(packet.ipv4.src_ip, packet.udp.src_port))
-            if(tcp_header.fin == 1):
-                complete = True
-        self.clear()
-        return bytes
+            if(self.cur_seq > self.verified_packets[0].seq_num):
+                self.verified_packets.pop(0)
 
+            if(self.cur_seq == self.verified_packets[0].seq_num):
+                self.income_bytes += self.verified_packets[0].data
+                self.cur_seq += len(self.verified_packets[0].data)
+                self.send(self.PS.pack_tcp(TCP(0, self.cur_seq, self.windows, 1, 0, 0, None)), self.target_addr_port)
+                if(self.verified_packets[0].fin == 1):
+                    self.transmit_complete = True
+                self.verified_packets.pop(0)
+
+    def recv_file(self):
+        self.cur_seq = 0
+        self.income_bytes = b''
+        t1 = threading.Thread(target = self.handle_buffer)
+        t2 = threading.Thread(target = self.verify_packet)
+        t3 = threading.Thread(target = self.recv_packets)
+        t1.start()
+        t2.start()
+        t3.start()
+        t1.join()
+        t2.join()
+        t3.join()
+        res = self.income_bytes
+        self.clear()
+        self.set_default_transmit_control()
+        return res
 
     def recv_ack(self, tcps):
         last_time = time.time()
@@ -242,7 +284,30 @@ class RLTP:
             last_time = time.time()
             last_tcp = tcp_header
         print("Done Recv ACK")
-            
+
+    def put_into_buffer(self, tcp):
+        if(self.cur_seq > tcp.seq_num):
+            print(f"Income: cur_seq, tcp_seq: {self.cur_seq}, {tcp.seq_num}")
+            return
+
+        if(len(self.verified_packets) == 0 or tcp.seq_num > self.verified_packets[-1].seq_num):
+            self.verified_packets.append(tcp)
+            return 
+
+        if(tcp.seq_num < self.verified_packets[0].seq_num):
+            self.verified_packets.insert(0, tcp)
+            return
+        
+        l = 0
+        r = len(self.verified_packets) - 1
+        while(l < r):
+            m = l + (r - l)//2
+            if(self.verified_packets[m].seq_num > tcp.seq_num):
+                r = m - 1
+            elif(self.verified_packets[m].seq_num < tcp.seq_num):
+                l = m + 1
+            else: return
+        self.verified_packets.insert(l, tcp)
 
     def connect(self, dst_ip):
         addr_port = (dst_ip, randint(5550, 10000))
@@ -335,6 +400,7 @@ class RLTP:
                 continue
 
             connected, res = self.accept((packet.ipv4.src_ip, packet.udp.src_port))
+        self.target_addr_port = res
         return connected, res
 
     def is_time_out(self, ref, limit):
@@ -349,3 +415,9 @@ class RLTP:
         self.transmit_complete = False
         self.quota = 0
         self.retransmit = False
+        self.mss = 256
+        self.recv_complete = False
+        self.cur_seq = 0
+        self.income_bytes = b''
+        self.unverify_packets = queue.Queue()
+        self.verified_packets.clear()
