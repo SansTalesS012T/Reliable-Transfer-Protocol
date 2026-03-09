@@ -196,7 +196,7 @@ class RLTP:
         res = self.PS.get_packet()
         return res
     
-    def handle_buffer(self):
+    def handle_recv_file(self):
         last_time = time.time()
         while(not self.transmit_complete):
             # print(f"Verified Packet: {len(self.verified_packets)}")
@@ -222,7 +222,7 @@ class RLTP:
     def recv_file(self):
         self.cur_seq = 0
         self.income_bytes = b''
-        t1 = threading.Thread(target = self.handle_buffer)
+        t1 = threading.Thread(target = self.handle_recv_file)
         t2 = threading.Thread(target = self.verify_packet, kwargs={"put_func": self.put_into_buffer_seq})
         t3 = threading.Thread(target = self.recv_packets)
         t1.start()
@@ -238,7 +238,7 @@ class RLTP:
 
     def recv_ack(self):
         self.cur_ack = 0
-        t1 = threading.Thread(target = self.handle_ack)
+        t1 = threading.Thread(target = self.handle_recv_ack)
         t2 = threading.Thread(target = self.verify_packet, kwargs={"put_func": self.put_into_buffer_ack})
         t3 = threading.Thread(target = self.recv_packets)
         t3.start()
@@ -249,7 +249,7 @@ class RLTP:
         t3.join()
         print("Done Recv ACK")
 
-    def handle_ack(self):
+    def handle_recv_ack(self):
         count_dup = 0
         last_ack = 0
         last_time = time.time()
