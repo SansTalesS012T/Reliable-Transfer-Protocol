@@ -211,13 +211,21 @@ class RLTP:
             if(self.cur_seq > self.verified_packets[0].seq_num):
                 self.verified_packets.pop(0)
 
-            if(self.cur_seq == self.verified_packets[0].seq_num):
+            is_match = False
+
+            while(self.cur_seq == self.verified_packets[0].seq_num):
+                is_match = True
                 self.income_bytes += self.verified_packets[0].data
                 self.cur_seq += len(self.verified_packets[0].data)
-                self.send(self.PS.pack_tcp(TCP(0, self.cur_seq, self.windows, 1, 0, 0, None)), self.target_addr_port)
                 if(self.verified_packets[0].fin == 1):
                     self.transmit_complete = True
                 self.verified_packets.pop(0)
+
+            if(is_match):
+                self.send(self.PS.pack_tcp(TCP(0, self.cur_seq, self.windows, 1, 0, 0, None)), self.target_addr_port)
+            
+
+            last_time = time.time()
 
     def recv_file(self):
         self.cur_seq = 0
