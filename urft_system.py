@@ -130,9 +130,11 @@ class RLTP:
         self.transmit_complete = False
         self.quota = 0
         self.retransmit = False
-        self.mss = 256
+        self.mss = 320
         self.cur_seq = 0
+        self.cur_ack = 0
         self.income_bytes = b''
+        self.file_size = 0
 
     def recv_packets(self):
         while(not self.transmit_complete):
@@ -140,7 +142,7 @@ class RLTP:
             if(packet != None): 
                 self.unverify_packets.put(packet)
 
-    def verify_packet(self):
+    def verify_packet(self, put_func):
         while(not self.transmit_complete):
             if(self.unverify_packets.empty()):
                 continue
@@ -150,9 +152,7 @@ class RLTP:
                 self.target_addr_port[0] != packet.ipv4.src_ip):
                 continue
             tcp_header = self.PS.unpack_tcp(packet.udp.data)
-            self.put_into_buffer(tcp_header)
-            if(len(self.verified_packets) > 0):
-                print(f"cur_seq, seq_num, size: {self.cur_seq}, {self.verified_packets[0].seq_num}, {len(self.verified_packets)}")
+            put_func(tcp_header)
             
 
     def send_file(self, file_name, addr_port):
@@ -162,19 +162,20 @@ class RLTP:
         raw = f"{file_name:<20}".encode() + f.read()
         bytes = [raw[i: i+self.windows if (i+self.windows < len(raw)) else len(raw)] for i in range(0, len(raw), self.windows)]
         tcps = self.prep_to_tcps(bytes)
+        self.file_size = len(raw)
         f.close()
-        t = threading.Thread(target = self.recv_ack, kwargs = {"tcps": tcps})
+        t = threading.Thread(target = self.recv_ack)
         t.start()
         cur_transmit = 0
         self.quota = self.mss
-        while(cur_transmit < len(tcps)):
+        while(cur_transmit < len(tcps) or not self.transmit_complete):
             # print(cur_transmit, self.quota, len(tcps))
             if(self.retransmit):
                 print("retransmit!")
                 self.quota = self.mss
                 cur_transmit = self.last_transmit
                 self.retransmit = False
-            if(self.quota > 0):
+            if(self.quota > 0 and cur_transmit < len(tcps)):
                 self.send(self.PS.pack_tcp(tcps[cur_transmit]), addr_port)
                 # print("send!")
                 cur_transmit += 1
@@ -222,7 +223,7 @@ class RLTP:
         self.cur_seq = 0
         self.income_bytes = b''
         t1 = threading.Thread(target = self.handle_buffer)
-        t2 = threading.Thread(target = self.verify_packet)
+        t2 = threading.Thread(target = self.verify_packet, kwargs={"put_func": self.put_into_buffer_seq})
         t3 = threading.Thread(target = self.recv_packets)
         t1.start()
         t2.start()
@@ -235,57 +236,61 @@ class RLTP:
         self.set_default_transmit_control()
         return res
 
-    def recv_ack(self, tcps):
-        last_time = time.time()
-        i = 0
+    def recv_ack(self):
+        self.cur_ack = 0
+        t1 = threading.Thread(target = self.handle_ack)
+        t2 = threading.Thread(target = self.verify_packet, kwargs={"put_func": self.put_into_buffer_ack})
+        t3 = threading.Thread(target = self.recv_packets)
+        t3.start()
+        t2.start()
+        t1.start()
+        t1.join()
+        t2.join()
+        t3.join()
+        print("Done Recv ACK")
+
+    def handle_ack(self):
         count_dup = 0
-        last_tcp = None
-        need_ack = len(tcps[i].data)
-        while(not self.transmit_complete):
+        last_ack = 0
+        last_time = time.time()
+        while(last_ack < self.file_size):
+            self.cur_ack = last_ack
+
             if(self.is_time_out(last_time, 50) or count_dup == 3):
                 self.retransmit = True
-                last_time = time.time()
                 count_dup = 0
+                last_time = time.time()
                 continue
 
-            packet = self.recv()
-
-            if(self.PS.is_packet_corrupted() or
-                packet.ethernet.protocol != self.PS.IPV4_PROTOCOL or 
-                packet.ipv4.protocol != self.PS.UDP_PROTOCOL or
-                self.target_addr_port[0] != packet.ipv4.src_ip):
-                self.clear()
+            if(len(self.verified_packets) == 0):
                 continue
 
-            tcp_header = self.PS.unpack_tcp(packet.udp.data)
+            tcp_header = self.verified_packets.pop(0)
 
-            if(last_tcp != None and tcp_header.ack_num == last_tcp.ack_num):
+            if(tcp_header.ack_num < last_ack):
+                continue
+
+            if(tcp_header.ack_num == last_ack):
                 count_dup += 1
                 continue
 
-            if(last_tcp != None and tcp_header.ack_num == need_ack):
+            if(tcp_header.ack_num - last_ack <= self.windows):
                 self.quota += 1
-                i += 1
-                need_ack += len(tcps[i].data)
+                last_ack = tcp_header.ack_num
                 count_dup = 0
                 self.last_transmit += 1
 
-            if(last_tcp != None and tcp_header.ack_num > need_ack):
-                diff = tcp_header.ack_num - need_ack
-                j = i
-                while(j < len(tcps) and diff > 0):
-                    diff -= len(tcps[j].data)
-                    j += 1
-                self.quota = self.mss
-                i = j
-                need_ack += len(tcps[i].data)
-                self.last_transmit = i
+            if(tcp_header.ack_num - last_ack > self.windows):
+                diff = (tcp_header.ack_num - last_ack)//self.windows
+                self.quota += diff
+                last_ack = tcp_header.ack_num
+                self.last_transmit += diff
 
+            print(f"last_ack, file_size, size: {last_ack}, {self.file_size}, {len(self.verified_packets)}")
             last_time = time.time()
-            last_tcp = tcp_header
-        print("Done Recv ACK")
+        self.transmit_complete = True
 
-    def put_into_buffer(self, tcp):
+    def put_into_buffer_seq(self, tcp):
         if(self.cur_seq > tcp.seq_num):
             print(f"Income: cur_seq, tcp_seq: {self.cur_seq}, {tcp.seq_num}")
             return
@@ -305,6 +310,29 @@ class RLTP:
             if(self.verified_packets[m].seq_num > tcp.seq_num):
                 r = m - 1
             elif(self.verified_packets[m].seq_num < tcp.seq_num):
+                l = m + 1
+            else: return
+        self.verified_packets.insert(l, tcp)
+
+    def put_into_buffer_ack(self, tcp):
+        if(self.cur_ack > tcp.ack_num):
+            return
+
+        if(len(self.verified_packets) == 0 or tcp.ack_num > self.verified_packets[-1].ack_num):
+            self.verified_packets.append(tcp)
+            return 
+
+        if(tcp.ack_num < self.verified_packets[0].ack_num):
+            self.verified_packets.insert(0, tcp)
+            return
+        
+        l = 0
+        r = len(self.verified_packets) - 1
+        while(l < r):
+            m = l + (r - l)//2
+            if(self.verified_packets[m].ack_num > tcp.ack_num):
+                r = m - 1
+            elif(self.verified_packets[m].ack_num < tcp.ack_num):
                 l = m + 1
             else: return
         self.verified_packets.insert(l, tcp)
@@ -418,6 +446,8 @@ class RLTP:
         self.mss = 256
         self.recv_complete = False
         self.cur_seq = 0
+        self.cur_ack = 0
         self.income_bytes = b''
         self.unverify_packets = queue.Queue()
         self.verified_packets.clear()
+        self.file_size = 0
